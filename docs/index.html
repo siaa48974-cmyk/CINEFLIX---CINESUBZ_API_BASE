@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🎬 CineMax — Sinhala Movies & TV Series</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🎬 CineMax</h1>
+  <form id="sform" onsubmit="return doSearch()">
+    <input id="q" placeholder="Film / TV Series හොයන්න..." autocomplete="off">
+    <button>🔍</button>
+  </form>
+</header>
+
+<nav id="nav">
+  <button onclick="loadCat('movies')">🎬 Movies</button>
+  <button onclick="loadCat('tvshows')">📺 TV Series</button>
+</nav>
+
+<div id="loader" class="empty" style="display:none">⏳ Loading...</div>
+<div id="grid" class="grid"></div>
+<div id="msg" class="empty"></div>
+<footer>CINEMAX BY CINEMAX</footer>
+
+<script>
+const BASE = 'https://cinesubz.net';
+// GitHub Pages CORS නිසා public proxy එකක් හරහා fetch
+const PROXIES = [
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+];
+
+async function fetchPage(url) {
+  for (const p of PROXIES) {
+    try {
+      const r = await fetch(p(url));
+      if (r.ok) return await r.text();
+    } catch {}
+  }
+  throw new Error('Site එක load කරන්න බැහැ (proxy fail)');
+}
+
+function cleanTitle(t) {
+  return String(t).replace(/\s*\|\s*සිංහල.*$/i, '')
+    .replace(/\s+Sinhala\s*Subtitles?.*$/i, '')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function cardHTML(r) {
+  return `<a class="card" href="#watch" onclick="openPost('${r.url}');return false">
+    <img src="${r.image}" alt="" loading="lazy">
+    <div class="info"><h3>${r.title}</h3>
+    <p>${r.rating ? '⭐ ' + r.rating + ' · ' : ''}${r.quality || ''}${r.type === 'tv' ? ' · 📺 TV' : ''}</p></div>
+  </a>`;
+}
+
+function parseCards(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const out = [];
+  const seen = new Set();
+  doc.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/cinesubz\.net\/(movies|tvshows|series|episodes|tv)\/([^\/?#]+)/i);
+    if (!m || seen.has(m[0])) return;
+    const img = a.querySelector('img');
+    let title = cleanTitle(img?.alt || a.textContent || '');
+    if (!title) {
+      const card = a.closest('article, div');
+      title = cleanTitle(card?.querySelector('h2,h3')?.textContent || '');
+    }
+    if (!title) return;
+    const card = a.closest('article, div');
+    const txt = card?.textContent || '';
+    seen.add(m[0]);
+    out.push({
+      title,
+      url: m[0],
+      image: img?.src || img?.getAttribute('data-src') || '',
+      rating: (txt.match(/★\s*([\d.]+)/) || [])[1] || '',
+      quality: (txt.match(/WEB-?DL|WEBRip|BluRay|HDRip|HDTV|4K/i) || [''])[0],
+      type: /\/(tvshows|series|episodes|tv)\//i.test(m[0]) ? 'tv' : 'movie',
+    });
+  });
+  return out.slice(0, 30);
+}
+
+async function render(list) {
+  document.getElementById('msg').textContent = '';
+  const g = document.getElementById('grid');
+  g.innerHTML = list.map(cardHTML).join('');
+  if (!list.length) document.getElementById('msg').textContent = 'Results නෑ 😕';
+}
+
+async function loadCat(cat, page = 1) {
+  const loader = document.getElementById('loader');
+  loader.style.display = 'block';
+  document.getElementById('grid').innerHTML = '';
+  try {
+    const html = await fetchPage(`${BASE}/${cat}/page/${page}/`);
+    render(parseCards(html));
+  } catch (e) {
+    document.getElementById('msg').textContent = '⚠️ ' + e.message;
+  }
+  loader.style.display = 'purely';
+  loader.style.display = 'none';
+  document.getElementById('nav').dataset.page = page;
+  document.getElementById('nav').dataset.cat = cat;
+}
+
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return false;
+  document.getElementById('grid').innerHTML = '';
+  document.getElementById('loader').style.display = 'block';
+  try {
+    const html = await fetchPage(`${BASE}/?s=${encodeURIComponent(q)}`);
+    render(parseCards(html));
+  } catch (e) {
+    document.getElementById('msg').textContent = '⚠️ ' + e.message;
+  }
+  document.getElementById('loader').display = 'none';
+  return false;
+}
+
+let currentPost = null;
+
+async function openPost(url) {
+  currentPost = url;
+  document.getElementById('grid').innerHTML = '';
+  document.getElementById('loader').style.display = 'block';
+  document.getElementById('msg').textContent = '';
+  try {
+    const html = await fetchPage(url);
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const title = cleanTitle(doc.querySelector('h1')?.textContent || '');
+    const img = doc.querySelector('img');
+    const image = img?.src || '';
+    const story = (doc.querySelector('.entry-content, .content')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+
+    const links = [];
+    const seen = new Set();
+    doc.querySelectorAll('a[href*="/links/"]').forEach(a => {
+      const href = a.href;
+      if (seen.has(href)) return;
+      seen.add(href);
+      const row = a.closest('tr') || a.closest('li,div,p') || a;
+      const t = row.textContent;
+      links.push({
+        label: a.textContent.trim() || 'Download',
+        quality: (t.match(/\b(4K|2160p|1080p|720p|480p)\b/i) || [''])[0],
+        size: (t.match(/\d+(?:\.\d+)?\s*(?:GB|MB)/i) || [''])[0],
+        url: href,
+      });
+    });
+
+    // quality වලට group කරලා buttons
+    const qOrder = ['480p', '720p', '1080p', '2160p', '4K'];
+    const groups = {};
+    links.forEach(l => { const k = (l.quality || 'Other').toUpperCase(); (groups[k] = groups[k] || []).push(l); });
+
+    let linksHTML = '';
+    for (const q of qOrder) {
+      if (!groups[q]) continue;
+      linksHTML += `<div class="qrow"><span class="qtag">${q === '2160p' ? '4K' : q}</span>`;
+      groups[q].forEach(l => {
+        linksHTML += `<a class="dl" href="${l.url}" target="_blank" rel="noopener">${l.label}${l.size ? ' · ' + l.size : ''}</a>`;
+      });
+      linksHTML += `</div>`;
+    }
+    Object.keys(groups).forEach(k => {
+      if (qOrder.includes(k)) return;
+      linksHTML += `<div class="qrow"><span class="qtag">${k}</span>` +
+        groups[k].map(l => `<a class="dl" href="${l.url}" target="_blank" rel="noopener">${l.label}${l.size ? ' · ' + l.size : ''}</a>`).join('') + `</div>`;
+    });
+
+    document.getElementById('grid').innerHTML = `
+      <div class="detail">
+        <img src="${image}" alt="">
+        <div class="meta"><h2>${title}</h2><p>${story || ''}</p></div>
+      </div>
+      <h3 class="sec">📥 Download Links</h3>
+      ${linksHTML || '<p class="empty">Links හම්බුනේ නෑ</p>'}
+      <button class="backbtn" onclick="goBack()">← Back</button>`;
+  } catch (e) {
+    document.getElementById('Movies').textContent = '⚠️ ' + e.message;
+  }
+  document.getElementById('loader').style.display = 'none';
+}
+
+function goBack() {
+  const cat = document.getElementById('nav').dataset.cat || 'movies';
+  loadCat(cat, parseInt(document.getElementById('nav').dataset.page || '1'));
+}
+
+// app start
+loadCat('movies');
+</script>
+</body>
+  </html>
